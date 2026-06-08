@@ -197,7 +197,7 @@ document.getElementById('registerBtn').addEventListener('click', async () => {
     };
 });
 
-       // 7. Core Authentication Assessment Loop (UPDATED WITH LOGGING TIME)
+      // 7. Core Authentication Assessment Loop (LOCAL ONLY - CONTINUOUS TIMELINE)
 async function runFaceVerification(stream) {
     let attempts = 0;
     const maxAttempts = 6;
@@ -210,7 +210,7 @@ async function runFaceVerification(stream) {
                                        .withFaceDescriptor();
 
         if (detection) {
-            const tx = db.transaction(["users", "logs"], "readwrite"); // Request read/write access to both tables
+            const tx = db.transaction(["users", "logs"], "readwrite");
             
             tx.objectStore("users").getAll().onsuccess = (e) => {
                 const users = e.target.result;
@@ -228,23 +228,45 @@ async function runFaceVerification(stream) {
                 if (bestMatch) {
                     clearInterval(checkInterval); // Stop scanning instantly
 
-                    // Create the login timestamp data
-                    const now = new Date();
-                    const logEntry = {
-                        userId: bestMatch.id,
-                        userName: bestMatch.name,
-                        loginTime: now.toISOString(),               // Machine readable: "2026-06-08T18:10:00.000Z"
-                        formattedTime: now.toLocaleTimeString(),    // Human readable: "6:10:00 PM"
-                        formattedDate: now.toLocaleDateString()     // Human readable: "6/8/2026"
-                    };
+                    const logStore = tx.objectStore("logs");
+                    
+                    // 1. Fetch all existing rows to look up this specific user's latest status
+                    logStore.getAll().onsuccess = (logEvent) => {
+                        const allLogs = logEvent.target.result;
+                        
+                        // Filter logs for this employee and sort them by time
+                        const userLogs = allLogs
+                            .filter(l => l.userId === bestMatch.id)
+                            .sort((a, b) => new Date(a.loginTime) - new Date(b.loginTime));
+                        
+                        let currentDirection = "IN"; // Default for first scan
+                        
+                        if (userLogs.length > 0) {
+                            const lastLog = userLogs[userLogs.length - 1];
+                            currentDirection = (lastLog.direction === "IN") ? "OUT" : "IN";
+                        }
 
-                    // Save the timestamp entry into the 'logs' store
-                    tx.objectStore("logs").put(logEntry);
+                        const now = new Date();
+                        const logEntry = {
+                            userId: bestMatch.id,
+                            userName: bestMatch.name,
+                            loginTime: now.toISOString(),               
+                            formattedTime: now.toLocaleTimeString(),    
+                            formattedDate: now.toLocaleDateString(),
+                            direction: currentDirection, // Saves "IN" or "OUT"
+                            synced: true // Marked true out-of-the-box since we are strictly offline/local
+                        };
 
-                    tx.oncomplete = () => {
-                        statusText.innerText = `🎉 Welcome ${bestMatch.name}! Verified at ${logEntry.formattedTime}.`;
-                        console.log("Attendance Saved:", logEntry);
-                        shutDownCamera(stream);
+                        // 2. Append this as a BRAND NEW row in the log table
+                        logStore.put(logEntry);
+
+                        tx.oncomplete = () => {
+                            const actionText = currentDirection === "IN" ? "Logged IN 🟢" : "Logged OUT 🔴";
+                            statusText.innerText = `🎉 ${bestMatch.name} successfully ${actionText} at ${logEntry.formattedTime}!`;
+                            console.log(`Saved new chronological record #${allLogs.length + 1}:`, logEntry);
+                            
+                            shutDownCamera(stream);
+                        };
                     };
                     return;
                 }
@@ -253,7 +275,7 @@ async function runFaceVerification(stream) {
 
         if (attempts >= maxAttempts) {
             setTimeout(() => {
-                if (statusText.innerText.includes("Welcome")) return;
+                if (statusText.innerText.includes("Logged")) return;
                 statusText.innerText = "⏳ No registered face matches. Powering down lens.";
                 clearInterval(checkInterval);
                 shutDownCamera(stream);
