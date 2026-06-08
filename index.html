@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Motion-Activated Attendance PWA</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; background: #f4f4f9; padding: 20px; margin: 0; }
+        #video-container { 
+            margin: 20px auto; 
+            width: 100%; 
+            max-width: 360px; 
+            border-radius: 10px; 
+            overflow: hidden; 
+            background: #000; 
+            display: none; 
+            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        }
+        video { width: 100%; display: block; transform: scaleX(-1); }
+        .btn { background: #007bff; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 5px; cursor: pointer; font-weight: bold; margin: 5px; }
+        .btn-green { background: #28a745; }
+        .panel { background: white; padding: 15px; border-radius: 8px; max-width: 340px; margin: 15px auto; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        input { padding: 10px; width: 85%; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        #status { font-size: 18px; font-weight: bold; color: #333; margin: 20px; }
+    </style>
+    <script src="./face-api.js"></script>
+</head>
+<body>
+
+    <h2>Motion Attendance Scanner</h2>
+    <p id="status">Initializing system...</p>
+    
+    <button class="btn" id="armBtn" style="display:none;">Arm Motion Sensor</button>
+    <button class="btn" id="simulateBtn" style="display:none; background:#dc3545;">Simulate Wave (Mac Test)</button>
+
+    <div id="video-container">
+        <video id="webcam" autoplay playsinline></video>
+    </div>
+
+    <div class="panel" id="registerPanel" style="display:none;">
+        <h3>Register New Face</h3>
+        <input type="text" id="userId" placeholder="Enter Employee/Student ID">
+        <input type="text" id="userName" placeholder="Enter Full Name">
+        <button class="btn btn-green" id="registerBtn">Scan & Save Face</button>
+    </div>
+
+    <script>
+        const video = document.getElementById('webcam');
+        const videoContainer = document.getElementById('video-container');
+        const statusText = document.getElementById('status');
+        const armBtn = document.getElementById('armBtn');
+        const simulateBtn = document.getElementById('simulateBtn');
+        const registerPanel = document.getElementById('registerPanel');
+        
+        let isCameraRunning = false;
+        let isModelsLoaded = false;
+        let db;
+
+        const MOTION_THRESHOLD = 13.0; // Total acceleration vector boundary
+
+        // 1. Service Worker Bootstrapper
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js')
+                .then(() => console.log("Offline Engine Standby"))
+                .catch(err => console.error("SW Configuration Blocked", err));
+        }
+
+        // 2. Initialize IndexedDB Engine
+        window.onload = () => {
+    const request = indexedDB.open("AttendanceDB", 1);
+    request.onupgradeneeded = (e) => {
+        db = e.target.result;
+        if (!db.objectStoreNames.contains("users")) db.createObjectStore("users", { keyPath: "id" });
+        if (!db.objectStoreNames.contains("logs")) db.createObjectStore("logs", { autoIncrement: true });
+    };
+    request.onsuccess = (e) => { 
+        db = e.target.result; 
+        loadModelsSequentially(); 
+    };
+};
+
+        // 3. Sequential Initialization Chain
+        async function loadModelsSequentially() {
+    statusText.innerText = "⏳ Loading AI Neural Networks into memory...";
+    
+    try {
+        // Force the paths as absolute string structures to prevent [object Object] serialization
+        const path = "models";
+        
+        await faceapi.nets.tinyFaceDetector.loadFromUri(path);
+        await faceapi.nets.faceLandmark68Net.loadFromUri(path);
+        await faceapi.nets.faceRecognitionNet.loadFromUri(path);
+        
+        isModelsLoaded = true;
+        statusText.innerText = "🟢 AI Systems Ready. Arm sensors or register face.";
+        armBtn.style.display = 'inline-block';
+        simulateBtn.style.display = 'inline-block';
+        registerPanel.style.display = 'block';
+    } catch (err) {
+        statusText.innerText = "❌ Error reading model files. Check models folder.";
+        console.error("AI engine initialization failed:", err);
+    }
+}
+
+        // 4. Input Tracking Hooks
+        armBtn.addEventListener('click', () => {
+            if(!isModelsLoaded) return;
+            armBtn.style.display = 'none';
+            simulateBtn.style.display = 'none';
+            registerPanel.style.display = 'none';
+            statusText.innerText = "Sensor Armed 🟢 Place device down or keep it still.";
+            startMotionTracking();
+        });
+
+        simulateBtn.addEventListener('click', () => {
+            if(!isModelsLoaded) return;
+            if (!isCameraRunning) wakeUpCamera();
+        });
+
+        function startMotionTracking() {
+            if ('DeviceMotionEvent' in window) {
+                window.addEventListener('devicemotion', (event) => {
+                    if (isCameraRunning) return;
+                    const acc = event.accelerationIncludingGravity;
+                    if (!acc) return;
+
+                    const totalForce = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
+                    if (totalForce > MOTION_THRESHOLD) {
+                        wakeUpCamera();
+                    }
+                });
+            }
+        }
+
+       
+        // 5. Hardware Activation Controls (UPDATED)
+async function wakeUpCamera(mode = "verify") {
+    isCameraRunning = true;
+    statusText.innerText = "⚡ Starting camera lens...";
+    
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, 
+            audio: false 
+        });
+        
+        video.srcObject = stream;
+        videoContainer.style.display = 'block';
+        
+        if (mode === "verify") {
+            statusText.innerText = "Camera Active. Scanning features...";
+            runFaceVerification(stream);
+        } else if (mode === "register") {
+            statusText.innerText = "Camera Preview Ready. Align your face and click 'Scan & Save Face' to capture!";
+        }
+    } catch (err) {
+        console.error(err);
+        statusText.innerText = "Camera access error.";
+        isCameraRunning = false;
+    }
+}
+// 6. User Registration Pipeline (UPDATED)
+document.getElementById('registerBtn').addEventListener('click', async () => {
+    const id = document.getElementById('userId').value.trim();
+    const name = document.getElementById('userName').value.trim();
+    if(!id || !name) return alert("Please specify both ID and Name.");
+
+    // First click: Turn on the camera in preview-only registration mode
+    if (!isCameraRunning) {
+        await wakeUpCamera("register");
+        return; 
+    }
+
+    statusText.innerText = "📸 Snapshot triggered! Extracting vectors... Hold still.";
+    
+    const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
+                                   .withFaceLandmarks()
+                                   .withFaceDescriptor();
+
+    if (!detection) {
+        statusText.innerText = "❌ Face not found. Center your face in the feed and click scan again.";
+        return;
+    }
+
+    // Save the descriptor array to database
+    const tx = db.transaction("users", "readwrite");
+    tx.objectStore("users").put({ id, name, descriptor: Array.from(detection.descriptor) });
+
+    tx.oncomplete = () => {
+        statusText.innerText = `✅ Registered: ${name} successfully saved to local DB!`;
+        document.getElementById('userId').value = '';
+        document.getElementById('userName').value = '';
+        
+        // Shut down the preview mirror right after saving
+        const stream = video.srcObject;
+        if(stream) shutDownCamera(stream);
+    };
+});
+
+       // 7. Core Authentication Assessment Loop (UPDATED WITH LOGGING TIME)
+async function runFaceVerification(stream) {
+    let attempts = 0;
+    const maxAttempts = 6;
+
+    const checkInterval = setInterval(async () => {
+        attempts++;
+        
+        const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
+                                       .withFaceLandmarks()
+                                       .withFaceDescriptor();
+
+        if (detection) {
+            const tx = db.transaction(["users", "logs"], "readwrite"); // Request read/write access to both tables
+            
+            tx.objectStore("users").getAll().onsuccess = (e) => {
+                const users = e.target.result;
+                let bestMatch = null;
+                let lowestDistance = 1.0; 
+
+                users.forEach(user => {
+                    const distance = faceapi.euclideanDistance(detection.descriptor, new Float32Array(user.descriptor));
+                    if (distance < 0.5 && distance < lowestDistance) {
+                        lowestDistance = distance;
+                        bestMatch = user;
+                    }
+                });
+
+                if (bestMatch) {
+                    clearInterval(checkInterval); // Stop scanning instantly
+
+                    // Create the login timestamp data
+                    const now = new Date();
+                    const logEntry = {
+                        userId: bestMatch.id,
+                        userName: bestMatch.name,
+                        loginTime: now.toISOString(),               // Machine readable: "2026-06-08T18:10:00.000Z"
+                        formattedTime: now.toLocaleTimeString(),    // Human readable: "6:10:00 PM"
+                        formattedDate: now.toLocaleDateString()     // Human readable: "6/8/2026"
+                    };
+
+                    // Save the timestamp entry into the 'logs' store
+                    tx.objectStore("logs").put(logEntry);
+
+                    tx.oncomplete = () => {
+                        statusText.innerText = `🎉 Welcome ${bestMatch.name}! Verified at ${logEntry.formattedTime}.`;
+                        console.log("Attendance Saved:", logEntry);
+                        shutDownCamera(stream);
+                    };
+                    return;
+                }
+            };
+        }
+
+        if (attempts >= maxAttempts) {
+            setTimeout(() => {
+                if (statusText.innerText.includes("Welcome")) return;
+                statusText.innerText = "⏳ No registered face matches. Powering down lens.";
+                clearInterval(checkInterval);
+                shutDownCamera(stream);
+            }, 500); 
+        }
+    }, 1200);
+}
+        function shutDownCamera(stream) {
+            stream.getTracks().forEach(track => track.stop());
+            video.srcObject = null;
+            videoContainer.style.display = 'none';
+            
+            setTimeout(() => {
+                isCameraRunning = false;
+                statusText.innerText = "🟢 System Reset. Awaiting action.";
+                armBtn.style.display = 'inline-block';
+                simulateBtn.style.display = 'inline-block';
+                registerPanel.style.display = 'block';
+            }, 3000);
+        }
+    </script>
+</body>
+</html>
