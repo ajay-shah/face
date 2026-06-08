@@ -3,299 +3,368 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Motion-Activated Attendance PWA</title>
+    <title>AI Hands-Free Attendance Kiosk</title>
+    <script defer src="./face-api.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; text-align: center; background: #f4f4f9; padding: 20px; margin: 0; }
-        #video-container { 
-            margin: 20px auto; 
-            width: 100%; 
-            max-width: 360px; 
-            border-radius: 10px; 
-            overflow: hidden; 
-            background: #000; 
-            display: none; 
-            box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #f4f6f9;
+            color: #333;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
-        video { width: 100%; display: block; transform: scaleX(-1); }
-        .btn { background: #007bff; color: white; border: none; padding: 12px 24px; font-size: 16px; border-radius: 5px; cursor: pointer; font-weight: bold; margin: 5px; }
-        .btn-green { background: #28a745; }
-        .panel { background: white; padding: 15px; border-radius: 8px; max-width: 340px; margin: 15px auto; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
-        input { padding: 10px; width: 85%; margin-bottom: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
-        #status { font-size: 18px; font-weight: bold; color: #333; margin: 20px; }
+        .container {
+            max-width: 600px;
+            width: 100%;
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.05);
+            text-align: center;
+        }
+        h1 { margin-bottom: 5px; color: #1a1a1a; font-size: 24px; }
+        #statusText {
+            font-weight: 600;
+            margin: 15px 0;
+            color: #555;
+            padding: 10px;
+            border-radius: 6px;
+            background: #f0f2f5;
+            font-size: 16px;
+        }
+        #videoContainer {
+            display: none;
+            margin: 20px 0;
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #000;
+        }
+        video {
+            width: 100%;
+            max-width: 500px;
+            display: block;
+            transition: opacity 0.4s ease;
+        }
+        .panel {
+            border-top: 1px solid #eee;
+            margin-top: 20px;
+            padding-top: 20px;
+            text-align: left;
+        }
+        .input-group {
+            margin-bottom: 12px;
+        }
+        label { display: block; font-weight: 500; margin-bottom: 4px; font-size: 14px; }
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 6px;
+            box-sizing: border-box;
+            font-size: 14px;
+        }
+        button {
+            width: 100%;
+            background: #0070f3;
+            color: white;
+            border: none;
+            padding: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            border-radius: 6px;
+            cursor: pointer;
+            margin-top: 5px;
+            transition: background 0.2s;
+        }
+        button:hover { background: #0061d1; }
+        .register-headline { font-size: 16px; font-weight: 600; margin-bottom: 15px; color: #444; }
     </style>
-    <script src="./face-api.js"></script>
 </head>
 <body>
 
-    <h2>Motion Attendance Scanner</h2>
-    <p id="status">Initializing system...</p>
-    
-    <button class="btn" id="armBtn" style="display:none;">Arm Motion Sensor</button>
-    <button class="btn" id="simulateBtn" style="display:none; background:#dc3545;">Simulate Wave (Mac Test)</button>
+<div class="container">
+    <h1>Face Recognition Kiosk</h1>
+    <div id="statusText">⏳ Initializing local AI models...</div>
 
-    <div id="video-container">
-        <video id="webcam" autoplay playsinline></video>
+    <div id="videoContainer">
+        <video id="video" autoplay playsinline muted></video>
     </div>
 
-    <div class="panel" id="registerPanel" style="display:none;">
-        <h3>Register New Face</h3>
-        <input type="text" id="userId" placeholder="Enter Employee/Student ID">
-        <input type="text" id="userName" placeholder="Enter Full Name">
-        <button class="btn btn-green" id="registerBtn">Scan & Save Face</button>
+    <div id="registerPanel" class="panel" style="display: none;">
+        <div class="register-headline">👤 Add New Employee Profile</div>
+        <div class="input-group">
+            <label for="userId">Employee ID</label>
+            <input type="text" id="userId" placeholder="e.g. EMP101">
+        </div>
+        <div class="input-group">
+            <label for="userName">Full Name</label>
+            <input type="text" id="userName" placeholder="e.g. Ajay Shah">
+        </div>
+        <button id="registerBtn">Scan & Save Face</button>
     </div>
+</div>
 
-    <script>
-        const video = document.getElementById('webcam');
-        const videoContainer = document.getElementById('video-container');
-        const statusText = document.getElementById('status');
-        const armBtn = document.getElementById('armBtn');
-        const simulateBtn = document.getElementById('simulateBtn');
-        const registerPanel = document.getElementById('registerPanel');
-        
-        let isCameraRunning = false;
-        let isModelsLoaded = false;
-        let db;
+<script>
+    const video = document.getElementById('video');
+    const statusText = document.getElementById('statusText');
+    const videoContainer = document.getElementById('videoContainer');
+    const registerPanel = document.getElementById('registerPanel');
 
-        const MOTION_THRESHOLD = 13.0; // Total acceleration vector boundary
+    let db;
+    let isModelsLoaded = false;
+    let isCameraRunning = false;
 
-        // 1. Service Worker Bootstrapper
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js')
-                .then(() => console.log("Offline Engine Standby"))
-                .catch(err => console.error("SW Configuration Blocked", err));
+    // Proximity Engine Variables
+    let motionCanvas = document.createElement('canvas');
+    let motionCtx = motionCanvas.getContext('2d');
+    let lastFrameData = null;
+    let motionDetectionInterval;
+    const MOTION_THRESHOLD = 25; // Pixel color difference boundary sensitivity
+
+    // 1. Initialize Local Storage (IndexedDB Architecture)
+    const dbRequest = indexedDB.open("AttendanceDB", 1);
+    dbRequest.onupgradeneeded = (e) => {
+        const localDb = e.target.result;
+        if (!localDb.objectStoreNames.contains("users")) {
+            localDb.createObjectStore("users", { keyPath: "id" });
         }
-
-        // 2. Initialize IndexedDB Engine
-        window.onload = () => {
-    const request = indexedDB.open("AttendanceDB", 1);
-    request.onupgradeneeded = (e) => {
+        if (!localDb.objectStoreNames.contains("logs")) {
+            localDb.createObjectStore("logs", { autoIncrement: true });
+        }
+    };
+    dbRequest.onsuccess = (e) => {
         db = e.target.result;
-        if (!db.objectStoreNames.contains("users")) db.createObjectStore("users", { keyPath: "id" });
-        if (!db.objectStoreNames.contains("logs")) db.createObjectStore("logs", { autoIncrement: true });
+        console.log("📦 Local IndexedDB Ready.");
+        loadModelsSequentially();
     };
-    request.onsuccess = (e) => { 
-        db = e.target.result; 
-        loadModelsSequentially(); 
-    };
-};
 
-        // 3. Sequential Initialization Chain
-        async function loadModelsSequentially() {
-    statusText.innerText = "⏳ Loading AI Neural Networks into memory...";
-    
-    try {
-        // Force the paths as absolute string structures to prevent [object Object] serialization
-        const path = "models";
-        
-        await faceapi.nets.tinyFaceDetector.loadFromUri(path);
-        await faceapi.nets.faceLandmark68Net.loadFromUri(path);
-        await faceapi.nets.faceRecognitionNet.loadFromUri(path);
-        
-        isModelsLoaded = true;
-        statusText.innerText = "🟢 AI Systems Ready. Arm sensors or register face.";
-        armBtn.style.display = 'inline-block';
-        simulateBtn.style.display = 'inline-block';
-        registerPanel.style.display = 'block';
-    } catch (err) {
-        statusText.innerText = "❌ Error reading model files. Check models folder.";
-        console.error("AI engine initialization failed:", err);
+    // 2. Load Weight Shards into Memory Sequentially
+    async function loadModelsSequentially() {
+        const MODEL_URL = './models/';
+        try {
+            statusText.innerText = "⏳ Loading Facial Tracking Core (1/3)...";
+            await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
+            
+            statusText.innerText = "⏳ Mapping Landmark Structural Contours (2/3)...";
+            await faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL);
+            
+            statusText.innerText = "⏳ Calibrating Vector Feature Extractors (3/3)...";
+            await faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL);
+
+            isModelsLoaded = true;
+            registerPanel.style.display = 'block';
+            
+            // Auto-ignite camera directly into low-power tracking mode on load
+            wakeUpCamera("verify");
+        } catch (err) {
+            console.error("Model failure:", err);
+            statusText.innerText = "❌ Neural net initialization error. Check your models folder.";
+        }
     }
-}
 
-        // 4. Input Tracking Hooks
-        armBtn.addEventListener('click', () => {
-            if(!isModelsLoaded) return;
-            armBtn.style.display = 'none';
-            simulateBtn.style.display = 'none';
-            registerPanel.style.display = 'none';
-            statusText.innerText = "Sensor Armed 🟢 Place device down or keep it still.";
-            startMotionTracking();
-        });
-
-        simulateBtn.addEventListener('click', () => {
-            if(!isModelsLoaded) return;
-            if (!isCameraRunning) wakeUpCamera();
-        });
-
-        function startMotionTracking() {
-            if ('DeviceMotionEvent' in window) {
-                window.addEventListener('devicemotion', (event) => {
-                    if (isCameraRunning) return;
-                    const acc = event.accelerationIncludingGravity;
-                    if (!acc) return;
-
-                    const totalForce = Math.sqrt(acc.x * acc.x + acc.y * acc.y + acc.z * acc.z);
-                    if (totalForce > MOTION_THRESHOLD) {
-                        wakeUpCamera();
-                    }
-                });
+    // 3. Hardware Activation Controls (With Standby Sensing Mode)
+    async function wakeUpCamera(mode = "verify") {
+        isCameraRunning = true;
+        statusText.innerText = "⚡ Initializing hardware lens...";
+        
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, 
+                audio: false 
+            });
+            
+            video.srcObject = stream;
+            videoContainer.style.display = 'block';
+            
+            if (mode === "verify") {
+                startProximitySensing(stream);
+            } else if (mode === "register") {
+                statusText.innerText = "Camera Preview Ready. Align your face and click 'Scan & Save Face' to capture!";
             }
+        } catch (err) {
+            console.error(err);
+            statusText.innerText = "Camera access error. Grant system hardware allowances.";
+            isCameraRunning = false;
+        }
+    }
+
+    // 4. Low-Power Proximity Sensor Loop (Pixel Change Delta Verification)
+    function startProximitySensing(stream) {
+        statusText.innerText = "💤 Standby Mode. Watching for movement...";
+        video.style.opacity = "0.15"; // Reduce brightness rendering feedback profile
+        
+        motionCanvas.width = 32;
+        motionCanvas.height = 24;
+
+        motionDetectionInterval = setInterval(() => {
+            if (!isCameraRunning) return clearInterval(motionDetectionInterval);
+
+            motionCtx.drawImage(video, 0, 0, 32, 24);
+            const currentFrameData = motionCtx.getImageData(0, 0, 32, 24).data;
+
+            if (lastFrameData) {
+                let changedPixels = 0;
+                
+                for (let i = 0; i < currentFrameData.length; i += 4) {
+                    const rDiff = Math.abs(currentFrameData[i] - lastFrameData[i]);
+                    const gDiff = Math.abs(currentFrameData[i+1] - lastFrameData[i+1]);
+                    const bDiff = Math.abs(currentFrameData[i+2] - lastFrameData[i+2]);
+                    
+                    if ((rDiff + gDiff + bDiff) / 3 > MOTION_THRESHOLD) {
+                        changedPixels++;
+                    }
+                }
+
+                // If more than 15% of the micro matrix array moves, wake up AI processing
+                if (changedPixels > (32 * 24 * 0.15)) {
+                    console.log("🏃‍♂️ Proximity motion detected! Starting AI scan...");
+                    clearInterval(motionDetectionInterval);
+                    video.style.opacity = "1.0";
+                    
+                    runFaceVerification(stream); 
+                }
+            }
+            
+            lastFrameData = currentFrameData;
+        }, 400); // Poll frames gently 2.5 times a second to drop battery overhead
+    }
+
+    // 5. User Registration Pipeline (ONE-CLICK PREVIEW SAVING)
+    document.getElementById('registerBtn').addEventListener('click', async () => {
+        const id = document.getElementById('userId').value.trim();
+        const name = document.getElementById('userName').value.trim();
+        if(!id || !name) return alert("Please specify both ID and Name.");
+
+        // If the proximity loop is running in standby, pull it to full power for registration
+        if (video.style.opacity === "0.15") {
+            clearInterval(motionDetectionInterval);
+            video.style.opacity = "1.0";
+            statusText.innerText = "📸 Ready to register. Face the camera and click again.";
+            return;
         }
 
-       
-        // 5. Hardware Activation Controls (UPDATED)
-async function wakeUpCamera(mode = "verify") {
-    isCameraRunning = true;
-    statusText.innerText = "⚡ Starting camera lens...";
-    
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } }, 
-            audio: false 
-        });
-        
-        video.srcObject = stream;
-        videoContainer.style.display = 'block';
-        
-        if (mode === "verify") {
-            statusText.innerText = "Camera Active. Scanning features...";
-            runFaceVerification(stream);
-        } else if (mode === "register") {
-            statusText.innerText = "Camera Preview Ready. Align your face and click 'Scan & Save Face' to capture!";
-        }
-    } catch (err) {
-        console.error(err);
-        statusText.innerText = "Camera access error.";
-        isCameraRunning = false;
-    }
-}
-// 6. User Registration Pipeline (UPDATED)
-document.getElementById('registerBtn').addEventListener('click', async () => {
-    const id = document.getElementById('userId').value.trim();
-    const name = document.getElementById('userName').value.trim();
-    if(!id || !name) return alert("Please specify both ID and Name.");
-
-    // First click: Turn on the camera in preview-only registration mode
-    if (!isCameraRunning) {
-        await wakeUpCamera("register");
-        return; 
-    }
-
-    statusText.innerText = "📸 Snapshot triggered! Extracting vectors... Hold still.";
-    
-    const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
-                                   .withFaceLandmarks()
-                                   .withFaceDescriptor();
-
-    if (!detection) {
-        statusText.innerText = "❌ Face not found. Center your face in the feed and click scan again.";
-        return;
-    }
-
-    // Save the descriptor array to database
-    const tx = db.transaction("users", "readwrite");
-    tx.objectStore("users").put({ id, name, descriptor: Array.from(detection.descriptor) });
-
-    tx.oncomplete = () => {
-        statusText.innerText = `✅ Registered: ${name} successfully saved to local DB!`;
-        document.getElementById('userId').value = '';
-        document.getElementById('userName').value = '';
-        
-        // Shut down the preview mirror right after saving
-        const stream = video.srcObject;
-        if(stream) shutDownCamera(stream);
-    };
-});
-
-      // 7. Core Authentication Assessment Loop (LOCAL ONLY - CONTINUOUS TIMELINE)
-async function runFaceVerification(stream) {
-    let attempts = 0;
-    const maxAttempts = 6;
-
-    const checkInterval = setInterval(async () => {
-        attempts++;
+        statusText.innerText = "📸 Capturing biometric profile... Hold steady.";
         
         const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
                                        .withFaceLandmarks()
                                        .withFaceDescriptor();
 
-        if (detection) {
-            const tx = db.transaction(["users", "logs"], "readwrite");
+        if (!detection) {
+            statusText.innerText = "❌ Face not found. Look directly at the lens and try again.";
+            return;
+        }
+
+        const tx = db.transaction("users", "readwrite");
+        tx.objectStore("users").put({ id, name, descriptor: Array.from(detection.descriptor) });
+
+        tx.oncomplete = () => {
+            statusText.innerText = `✅ Registered: ${name} saved locally!`;
+            document.getElementById('userId').value = '';
+            document.getElementById('userName').value = '';
             
-            tx.objectStore("users").getAll().onsuccess = (e) => {
-                const users = e.target.result;
-                let bestMatch = null;
-                let lowestDistance = 1.0; 
+            // Re-trigger standard low-power standby mode tracking loop
+            const stream = video.srcObject;
+            if(stream) startProximitySensing(stream);
+        };
+    });
 
-                users.forEach(user => {
-                    const distance = faceapi.euclideanDistance(detection.descriptor, new Float32Array(user.descriptor));
-                    if (distance < 0.5 && distance < lowestDistance) {
-                        lowestDistance = distance;
-                        bestMatch = user;
-                    }
-                });
+    // 6. Hands-Free Automated Scanning Engine (LOCAL CHRONOLOGICAL TIMELINE)
+    async function runFaceVerification(stream) {
+        statusText.innerText = "👁️ AI Active. Processing facial vectors...";
+        let attempts = 0;
+        const maxAttempts = 8;
 
-                if (bestMatch) {
-                    clearInterval(checkInterval); // Stop scanning instantly
+        const checkInterval = setInterval(async () => {
+            attempts++;
+            
+            const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
+                                           .withFaceLandmarks()
+                                           .withFaceDescriptor();
 
-                    const logStore = tx.objectStore("logs");
-                    
-                    // 1. Fetch all existing rows to look up this specific user's latest status
-                    logStore.getAll().onsuccess = (logEvent) => {
-                        const allLogs = logEvent.target.result;
-                        
-                        // Filter logs for this employee and sort them by time
-                        const userLogs = allLogs
-                            .filter(l => l.userId === bestMatch.id)
-                            .sort((a, b) => new Date(a.loginTime) - new Date(b.loginTime));
-                        
-                        let currentDirection = "IN"; // Default for first scan
-                        
-                        if (userLogs.length > 0) {
-                            const lastLog = userLogs[userLogs.length - 1];
-                            currentDirection = (lastLog.direction === "IN") ? "OUT" : "IN";
+            if (detection) {
+                clearInterval(checkInterval); // Halt evaluation cycle immediately
+                
+                const tx = db.transaction(["users", "logs"], "readwrite");
+                
+                tx.objectStore("users").getAll().onsuccess = (e) => {
+                    const users = e.target.result;
+                    let bestMatch = null;
+                    let lowestDistance = 1.0; 
+
+                    users.forEach(user => {
+                        const distance = faceapi.euclideanDistance(detection.descriptor, new Float32Array(user.descriptor));
+                        if (distance < 0.5 && distance < lowestDistance) {
+                            lowestDistance = distance;
+                            bestMatch = user;
                         }
+                    });
 
-                        const now = new Date();
-                        const logEntry = {
-                            userId: bestMatch.id,
-                            userName: bestMatch.name,
-                            loginTime: now.toISOString(),               
-                            formattedTime: now.toLocaleTimeString(),    
-                            formattedDate: now.toLocaleDateString(),
-                            direction: currentDirection, // Saves "IN" or "OUT"
-                            synced: true // Marked true out-of-the-box since we are strictly offline/local
-                        };
-
-                        // 2. Append this as a BRAND NEW row in the log table
-                        logStore.put(logEntry);
-
-                        tx.oncomplete = () => {
-                            const actionText = currentDirection === "IN" ? "Logged IN 🟢" : "Logged OUT 🔴";
-                            statusText.innerText = `🎉 ${bestMatch.name} successfully ${actionText} at ${logEntry.formattedTime}!`;
-                            console.log(`Saved new chronological record #${allLogs.length + 1}:`, logEntry);
+                    // Scenario A: Profile Found
+                    if (bestMatch) {
+                        const logStore = tx.objectStore("logs");
+                        
+                        logStore.getAll().onsuccess = (logEvent) => {
+                            const allLogs = logEvent.target.result;
+                            const userLogs = allLogs
+                                .filter(l => l.userId === bestMatch.id)
+                                .sort((a, b) => new Date(a.loginTime) - new Date(b.loginTime));
                             
-                            shutDownCamera(stream);
-                        };
-                    };
-                    return;
-                }
-            };
-        }
+                            let currentDirection = "IN"; 
+                            if (userLogs.length > 0) {
+                                const lastLog = userLogs[userLogs.length - 1];
+                                currentDirection = (lastLog.direction === "IN") ? "OUT" : "IN";
+                            }
 
-        if (attempts >= maxAttempts) {
-            setTimeout(() => {
-                if (statusText.innerText.includes("Logged")) return;
-                statusText.innerText = "⏳ No registered face matches. Powering down lens.";
+                            const now = new Date();
+                            const logEntry = {
+                                userId: bestMatch.id,
+                                userName: bestMatch.name,
+                                loginTime: now.toISOString(),               
+                                formattedTime: now.toLocaleTimeString(),    
+                                formattedDate: now.toLocaleDateString(),
+                                direction: currentDirection, 
+                                synced: true 
+                            };
+
+                            logStore.put(logEntry);
+
+                            tx.oncomplete = () => {
+                                const actionText = currentDirection === "IN" ? "logged IN 🟢" : "logged OUT 🔴";
+                                statusText.innerText = `🎉 Hi ${bestMatch.name}, you ${actionText} at ${logEntry.formattedTime}!`;
+                                
+                                // Pause for 4 seconds so the user can read it, then reset to standby
+                                setTimeout(() => {
+                                    startProximitySensing(stream);
+                                }, 4000);
+                            };
+                        };
+                    } 
+                    // Scenario B: Vector anomaly / Strangers
+                    else {
+                        statusText.innerText = "❌ Profile details unrecognized.";
+                        setTimeout(() => {
+                            startProximitySensing(stream);
+                        }, 2500);
+                    }
+                };
+                return;
+            }
+
+            // Fallback timeout if a person walks away mid-scan frame block execution
+            if (attempts >= maxAttempts) {
                 clearInterval(checkInterval);
-                shutDownCamera(stream);
-            }, 500); 
-        }
-    }, 1200);
-}
-        function shutDownCamera(stream) {
-            stream.getTracks().forEach(track => track.stop());
-            video.srcObject = null;
-            videoContainer.style.display = 'none';
-            
-            setTimeout(() => {
-                isCameraRunning = false;
-                statusText.innerText = "🟢 System Reset. Awaiting action.";
-                armBtn.style.display = 'inline-block';
-                simulateBtn.style.display = 'inline-block';
-                registerPanel.style.display = 'block';
-            }, 3000);
-        }
-    </script>
+                statusText.innerText = "⏳ Session expired. Re-entering standby sleep mode.";
+                setTimeout(() => {
+                    startProximitySensing(stream);
+                }, 1500);
+            }
+        }, 1000); // Scan every 1 second when active
+    }
+</script>
+
 </body>
 </html>
