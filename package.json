@@ -1,0 +1,8 @@
+{
+  "name": "motion-attendance-pwa",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "mkdir -p dist && cp -r index.html face-api.js manifest.json sw.js models dist/"
+  },
+  "dependencies": {}
+}
